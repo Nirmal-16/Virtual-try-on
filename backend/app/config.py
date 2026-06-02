@@ -32,9 +32,13 @@ class Settings(BaseSettings):
     allowed_image_types: str = "image/jpeg,image/png,image/webp"
 
     # Virtual Try-On
+    # Options: mock | fal | replicate | <HuggingFace model ID>
     catvton_model_id: str = "mock"
     catvton_device: str = "cpu"
     hf_token: str = ""
+    replicate_api_token: str = ""
+    # fal.ai try-on model — fashn/tryon gives best results
+    catvton_fal_model: str = "fashn/tryon"
 
     # Scene Generation
     scene_provider: str = "mock"

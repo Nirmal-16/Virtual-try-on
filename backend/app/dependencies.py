@@ -41,6 +41,9 @@ def get_tryon_service() -> TryOnService:
         model_id=s.catvton_model_id,
         device=s.catvton_device,
         hf_token=s.hf_token,
+        fal_api_key=s.flux_api_key,
+        fal_model=s.catvton_fal_model,
+        replicate_api_token=s.replicate_api_token,
     )
 
 
