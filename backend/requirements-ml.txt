@@ -1,0 +1,8 @@
+# ML dependencies — requires Python 3.11 or 3.12 (PyTorch has no Python 3.14 wheels yet)
+# Install only when using CATVTON_MODEL_ID != mock or SCENE_PROVIDER=sdxl
+-r requirements.txt
+torch>=2.5.0
+torchvision>=0.20.0
+diffusers>=0.31.0
+transformers>=4.46.0
+accelerate>=1.0.0

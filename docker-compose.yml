@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: development
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8000"
+      LOG_LEVEL: DEBUG
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:80,http://frontend"
+      STORAGE_ROOT: /app
+      UPLOADS_DIR: uploads
+      OUTPUTS_DIR: outputs
+      CATVTON_MODEL_ID: mock
+      CATVTON_DEVICE: cpu
+      SCENE_PROVIDER: mock
+      JOB_STORE_BACKEND: memory
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_outputs:/app/outputs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional Redis — uncomment to enable persistent job store
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   restart: unless-stopped
+
+volumes:
+  backend_uploads:
+  backend_outputs:

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c \"from app.main import app; print\\('Import OK'\\)\")",
+      "Bash(python -c \"import openai; print\\(openai.__version__\\); from openai import AsyncOpenAI; print\\('OpenAI OK'\\)\")",
+      "Bash(python -c \"from openai import AsyncOpenAI; c = AsyncOpenAI.__new__\\(AsyncOpenAI\\); print\\(dir\\(c.images\\)\\)\")",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
