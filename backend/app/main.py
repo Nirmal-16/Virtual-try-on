@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.middleware import setup_cors, setup_exception_handlers
@@ -59,6 +60,10 @@ def create_app() -> FastAPI:
         StaticFiles(directory=str(storage.outputs_root())),
         name="images",
     )
+
+    @app.get("/", include_in_schema=False)
+    async def root():
+        return RedirectResponse(url="/docs")
 
     @app.get("/health", tags=["health"])
     async def health():

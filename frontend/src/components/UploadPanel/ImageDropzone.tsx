@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useDropzone } from "react-dropzone";
+import { useDropzone, type FileRejection } from "react-dropzone";
 import { Upload, X } from "lucide-react";
 
 const ACCEPTED_TYPES = { "image/jpeg": [], "image/png": [], "image/webp": [] };
@@ -16,7 +16,7 @@ export function ImageDropzone({ label, file, onFile, disabled }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const onDrop = useCallback(
-    (accepted: File[], rejected: { errors: { message: string }[] }[]) => {
+    (accepted: File[], rejected: FileRejection[]) => {
       setError(null);
       if (rejected.length > 0) {
         const msg = rejected[0].errors[0]?.message ?? "Invalid file";

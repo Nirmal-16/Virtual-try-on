@@ -5,7 +5,9 @@
       "Bash(python -c \"from app.main import app; print\\('Import OK'\\)\")",
       "Bash(python -c \"import openai; print\\(openai.__version__\\); from openai import AsyncOpenAI; print\\('OpenAI OK'\\)\")",
       "Bash(python -c \"from openai import AsyncOpenAI; c = AsyncOpenAI.__new__\\(AsyncOpenAI\\); print\\(dir\\(c.images\\)\\)\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(copy .env.example .env)",
+      "PowerShell(Copy-Item \"c:\\\\Users\\\\91902\\\\OneDrive\\\\Desktop\\\\virtual-try-on\\\\backend\\\\.env.example\" \"c:\\\\Users\\\\91902\\\\OneDrive\\\\Desktop\\\\virtual-try-on\\\\backend\\\\.env\")"
     ]
   }
 }

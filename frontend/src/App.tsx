@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { startScene, startTryOn } from "./api/client";
 import { ProgressStepper } from "./components/ProgressStepper/ProgressStepper";
 import { ScenePreview } from "./components/ResultViewer/ScenePreview";
@@ -44,10 +44,6 @@ export default function App() {
   };
 
   const displayStatus: JobStatus | null = jobId ? status : null;
-  const isProcessing =
-    status === "tryon_processing" ||
-    status === "scene_processing" ||
-    status === "queued";
   const isFailed = status === "failed";
   const isDone = status === "done";
 
