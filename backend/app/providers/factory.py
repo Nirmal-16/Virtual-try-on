@@ -54,7 +54,12 @@ def create_scene_provider(
             device=settings.sdxl_device,
         )
 
+    if provider_name == "hf_inference":
+        from app.providers.hf_inference_scene_provider import HFInferenceSceneProvider
+
+        return HFInferenceSceneProvider(hf_token=settings.hf_token)
+
     raise UnsupportedProviderError(
         f"Unknown scene provider '{provider_name}'. "
-        "Valid options: mock, flux, gpt_image, sdxl."
+        "Valid options: mock, flux, gpt_image, sdxl, hf_inference."
     )
