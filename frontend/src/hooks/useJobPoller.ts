@@ -42,8 +42,20 @@ export function useJobPoller(jobId: string | null): UseJobPollerReturn {
         if (TERMINAL_STATES.includes(result.status)) {
           stopPolling();
         }
-      } catch {
-        // transient network error — keep polling
+      } catch (err: unknown) {
+        // 404 = job not found (server restarted or bad ID) — stop polling
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 404 || status === 422) {
+          setData({
+            job_id: jobId,
+            status: "failed",
+            tryon_url: null,
+            scene_url: null,
+            error: "Session expired — please upload your images again.",
+          });
+          stopPolling();
+        }
+        // other network errors — keep polling (transient)
       }
     };
 

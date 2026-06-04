@@ -141,9 +141,10 @@ class TryOnService:
                 "model_image":        person_url,
                 "garment_image":      dress_url,
                 "category":           _FAL_CATEGORY.get(cloth_type, "tops"),
-                "mode":               "balanced",
+                "mode":               "quality",   # best accuracy
                 "garment_photo_type": "auto",
                 "nsfw_filter":        False,
+                "num_samples":        1,
             }
         else:
             payload = {
@@ -170,12 +171,17 @@ class TryOnService:
             data = resp.json()
 
         try:
-            if "output" in data:
-                result_url: str = data["output"][0]["url"]
+            if "images" in data:
+                # v1.5+ response: {"images": [{"url": "..."}]}
+                result_url: str = data["images"][0]["url"]
+            elif "output" in data:
+                # legacy response: {"output": [{"url": "..."}]}
+                result_url = data["output"][0]["url"]
             elif "image" in data:
+                # cat-vton response: {"image": {"url": "..."}}
                 result_url = data["image"]["url"]
             else:
-                raise TryOnError(f"Unexpected fal.ai response: {list(data.keys())}")
+                raise TryOnError(f"Unexpected fal.ai response keys: {list(data.keys())}")
         except (KeyError, IndexError) as exc:
             raise TryOnError(f"Could not parse fal.ai response: {data}") from exc
 

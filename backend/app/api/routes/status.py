@@ -20,7 +20,15 @@ async def get_status(
     job_id: str,
     job_store: JobStoreBase = Depends(get_job_store),
 ) -> JobStatusResponse:
-    job = job_store.get(job_id)
+    from fastapi import HTTPException
+    from app.utils.errors import JobNotFoundError
+    try:
+        job = job_store.get(job_id)
+    except JobNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail={"job_id": job_id, "error": "Job not found — server may have restarted."},
+        )
 
     tryon_url = (
         _image_url(job_id, "tryon_result.png") if job.tryon_result_path else None

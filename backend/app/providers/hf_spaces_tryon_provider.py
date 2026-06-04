@@ -27,17 +27,25 @@ _executor = ThreadPoolExecutor(max_workers=1)
 
 
 # ── Result parser ──────────────────────────────────────────────────────────────
-# gradio_client >= 1.0 may return: PIL Image, FileData, dict, str path, URL, bytes
 
-def _image_from_result(result) -> Optional[Image.Image]:
+def _image_from_result(result) -> Optional[Image.Image]:  # noqa: C901
+    """Try every known shape gradio_client may return and extract a PIL Image."""
     if result is None:
         return None
 
-    # Direct PIL Image (gradio_client >= 1.0 sometimes returns this)
+    # ── Direct PIL Image ─────────────────────────────────────────────────────
     if isinstance(result, Image.Image):
         return result.convert("RGB")
 
-    # List / tuple — recurse, return first valid image
+    # ── numpy array ──────────────────────────────────────────────────────────
+    try:
+        import numpy as np
+        if isinstance(result, np.ndarray):
+            return Image.fromarray(result.astype("uint8")).convert("RGB")
+    except ImportError:
+        pass
+
+    # ── List / tuple — recurse, first valid image wins ───────────────────────
     if isinstance(result, (list, tuple)):
         for item in result:
             img = _image_from_result(item)
@@ -45,38 +53,86 @@ def _image_from_result(result) -> Optional[Image.Image]:
                 return img
         return None
 
-    # gradio_client FileData object (.path / .url attributes)
-    if hasattr(result, "path"):
-        p = getattr(result, "path", None)
-        if p and os.path.exists(str(p)):
-            return Image.open(str(p)).convert("RGB")
-    if hasattr(result, "url"):
-        u = getattr(result, "url", None)
-        if u:
-            return _fetch(u)
+    # ── Object with .value (Gradio component wrapper) ────────────────────────
+    if hasattr(result, "value") and not isinstance(result, dict):
+        img = _image_from_result(getattr(result, "value"))
+        if img is not None:
+            return img
 
-    # Dict {"path": ..., "url": ...}
+    # ── FileData / any object with .path or .url ─────────────────────────────
+    for attr in ("path", "file_path", "tmp_path"):
+        p = getattr(result, attr, None)
+        if p:
+            p = str(p)
+            if p.startswith("http"):
+                try:
+                    return _fetch(p)
+                except Exception:
+                    pass
+            else:
+                try:
+                    return Image.open(p).convert("RGB")
+                except Exception:
+                    pass
+
+    for attr in ("url", "src", "file_url"):
+        u = getattr(result, attr, None)
+        if u:
+            try:
+                return _fetch(str(u))
+            except Exception:
+                pass
+
+    # ── Dict ─────────────────────────────────────────────────────────────────
     if isinstance(result, dict):
-        for key in ("path", "name", "tmp_path", "filepath"):
+        for key in ("path", "name", "tmp_path", "filepath", "file_path"):
             p = result.get(key)
-            if p and os.path.exists(str(p)):
-                return Image.open(str(p)).convert("RGB")
-        for key in ("url", "src"):
+            if p:
+                p = str(p)
+                if p.startswith("http"):
+                    try:
+                        return _fetch(p)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        return Image.open(p).convert("RGB")
+                    except Exception:
+                        pass
+        for key in ("url", "src", "file_url", "image_url"):
             u = result.get(key)
             if u:
-                return _fetch(u)
+                try:
+                    return _fetch(str(u))
+                except Exception:
+                    pass
 
-    # Plain string — local path or URL
-    if isinstance(result, str):
-        if os.path.exists(result):
-            return Image.open(result).convert("RGB")
+    # ── Plain string — try as path then as URL ────────────────────────────────
+    if isinstance(result, str) and result:
         if result.startswith("http"):
-            return _fetch(result)
+            try:
+                return _fetch(result)
+            except Exception:
+                pass
+        else:
+            try:
+                return Image.open(result).convert("RGB")
+            except Exception:
+                pass
 
-    # Raw bytes
+    # ── Raw bytes ─────────────────────────────────────────────────────────────
     if isinstance(result, (bytes, bytearray)):
-        return Image.open(_io.BytesIO(result)).convert("RGB")
+        try:
+            return Image.open(_io.BytesIO(result)).convert("RGB")
+        except Exception:
+            pass
 
+    # Log what we got so the terminal shows the actual type for debugging
+    logger.warning(
+        "hf_result_unrecognized",
+        result_type=type(result).__name__,
+        result_repr=repr(result)[:400],
+    )
     return None
 
 
@@ -88,11 +144,22 @@ def _fetch(url: str) -> Image.Image:
 
 # ── Space-specific predict functions ──────────────────────────────────────────
 
+def _log_api(client, space: str) -> None:
+    """Log available endpoints for debugging."""
+    try:
+        info = client.view_api(return_format="dict") or {}
+        eps  = list(info.get("named_endpoints", {}).keys())
+        logger.info("space_endpoints", space=space, endpoints=eps)
+    except Exception as exc:
+        logger.warning("view_api_failed", space=space, error=str(exc))
+
+
 def _predict_idm_vton(
     client, person_path: str, dress_path: str, cloth_type: str = "upper"
 ) -> Optional[Image.Image]:
     """yisol/IDM-VTON — image-editor dict input, /tryon endpoint."""
     from gradio_client import handle_file
+    _log_api(client, "IDM-VTON")
 
     garment_desc = {
         "upper":   "upper body garment",
@@ -127,16 +194,49 @@ def _predict_idm_vton(
     return None
 
 
+def _predict_with_fallback(
+    client,
+    space_tag: str,
+    input_variants: list,
+    endpoint_names: list[str],
+) -> Optional[Image.Image]:
+    """Shared helper: try named endpoints, then no-name default."""
+    for ep in endpoint_names:
+        for inputs in input_variants:
+            try:
+                raw = client.predict(*inputs, api_name=ep)
+                logger.info(f"{space_tag}_raw", ep=ep, raw_type=type(raw).__name__,
+                            raw_repr=repr(raw)[:300])
+                img = _image_from_result(raw)
+                if img is not None:
+                    return img
+            except Exception as exc:
+                logger.warning(f"{space_tag}_ep_failed", ep=ep, error=str(exc)[:100])
+
+    # No named endpoints found or all failed — try without api_name
+    for inputs in input_variants:
+        try:
+            raw = client.predict(*inputs)
+            logger.info(f"{space_tag}_raw_default", raw_type=type(raw).__name__,
+                        raw_repr=repr(raw)[:300])
+            img = _image_from_result(raw)
+            if img is not None:
+                return img
+        except Exception as exc:
+            logger.warning(f"{space_tag}_default_failed", error=str(exc)[:100])
+
+    return None
+
+
 def _predict_ootd(
     client, person_path: str, dress_path: str, cloth_type: str = "upper"
 ) -> Optional[Image.Image]:
-    """levihsu/OOTDiffusion — category-aware API."""
+    """levihsu/OOTDiffusion."""
     from gradio_client import handle_file
 
     cat_map = {"upper": "upperbody", "lower": "lowerbody", "overall": "dress"}
-    category = cat_map.get(cloth_type, "upperbody")
+    cat = cat_map.get(cloth_type, "upperbody")
 
-    # Discover endpoints first
     endpoint_names: list[str] = []
     try:
         info = client.view_api(return_format="dict") or {}
@@ -144,23 +244,13 @@ def _predict_ootd(
     except Exception:
         pass
 
-    input_variants = [
-        [handle_file(person_path), handle_file(dress_path), category],
-        [handle_file(person_path), handle_file(dress_path), category, 20, 2.0, 42],
-        [handle_file(person_path), handle_file(dress_path)],
+    pf, df = handle_file(person_path), handle_file(dress_path)
+    variants = [
+        [pf, df, cat],
+        [pf, df, cat, 20, 2.0, 42],
+        [pf, df],
     ]
-
-    for ep in (endpoint_names or ["/run", "/predict", "/infer"]):
-        for inputs in input_variants:
-            try:
-                raw = client.predict(*inputs, api_name=ep)
-                img = _image_from_result(raw)
-                if img is not None:
-                    logger.info("ootd_success", endpoint=ep)
-                    return img
-            except Exception:
-                continue
-    return None
+    return _predict_with_fallback(client, "ootd", variants, endpoint_names)
 
 
 def _predict_kolors(
@@ -176,29 +266,19 @@ def _predict_kolors(
     except Exception:
         pass
 
-    input_variants = [
-        [handle_file(person_path), handle_file(dress_path)],
-        [handle_file(person_path), handle_file(dress_path), cloth_type],
-        [handle_file(person_path), handle_file(dress_path), cloth_type, 20, 2.5, 42],
+    pf, df = handle_file(person_path), handle_file(dress_path)
+    variants = [
+        [pf, df],
+        [pf, df, cloth_type],
+        [pf, df, cloth_type, 20, 2.5, 42],
     ]
-
-    for ep in (endpoint_names or ["/tryon", "/run", "/predict"]):
-        for inputs in input_variants:
-            try:
-                raw = client.predict(*inputs, api_name=ep)
-                img = _image_from_result(raw)
-                if img is not None:
-                    logger.info("kolors_success", endpoint=ep)
-                    return img
-            except Exception:
-                continue
-    return None
+    return _predict_with_fallback(client, "kolors", variants, endpoint_names)
 
 
 def _predict_catvton(
     client, person_path: str, dress_path: str, cloth_type: str = "upper"
 ) -> Optional[Image.Image]:
-    """zhengchong/CatVTON — discover endpoint dynamically."""
+    """zhengchong/CatVTON — discover endpoint, fall back to no-name call."""
     from gradio_client import handle_file
 
     endpoint_names: list[str] = []
@@ -206,32 +286,58 @@ def _predict_catvton(
         info = client.view_api(return_format="dict") or {}
         endpoint_names = list(info.get("named_endpoints", {}).keys())
         logger.info("catvton_endpoints", endpoints=endpoint_names)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("catvton_view_api_failed", error=str(e))
 
-    ct_aliases = {
-        "upper":   ["upper", "tops", "upper body"],
-        "lower":   ["lower", "bottoms", "lower body"],
-        "overall": ["overall", "full", "dresses"],
-    }.get(cloth_type, ["upper"])
+    pf = handle_file(person_path)
+    df = handle_file(dress_path)
 
-    input_variants = (
-        [(handle_file(person_path), handle_file(dress_path), ct) for ct in ct_aliases]
-        + [(handle_file(person_path), handle_file(dress_path), ct, 30, 2.5, 42)
-           for ct in ct_aliases]
-        + [(handle_file(person_path), handle_file(dress_path))]
-    )
+    # CatVTON ONLY accepts these exact cloth_type values — no aliases
+    valid_ct = cloth_type if cloth_type in ("upper", "lower", "overall") else "upper"
 
-    for ep in endpoint_names:
+    # Endpoint discovered from logs: /submit_function_flux
+    # Fallback to any other discovered endpoint, then no-name default
+    preferred = ["/submit_function_flux"] + [
+        ep for ep in endpoint_names if ep != "/submit_function_flux"
+    ]
+    if not preferred:
+        preferred = endpoint_names or []
+
+    input_variants = [
+        (pf, df, valid_ct),
+        (pf, df, valid_ct, 30, 2.5, 42),
+        (pf, df, valid_ct, 50, 2.5, 42),
+        (pf, df),
+    ]
+
+    for ep in preferred:
         for inputs in input_variants:
             try:
                 raw = client.predict(*inputs, api_name=ep)
+                logger.info("catvton_raw", ep=ep, raw_type=type(raw).__name__,
+                            raw_repr=repr(raw)[:300])
                 img = _image_from_result(raw)
                 if img is not None:
                     logger.info("catvton_success", endpoint=ep)
                     return img
-            except Exception:
+            except Exception as exc:
+                logger.warning("catvton_ep_failed", ep=ep, error=str(exc)[:120])
                 continue
+
+    # Last resort — call without api_name (gradio picks the first function)
+    for inputs in input_variants:
+        try:
+            raw = client.predict(*inputs)
+            logger.info("catvton_raw_default", raw_type=type(raw).__name__,
+                        raw_repr=repr(raw)[:300])
+            img = _image_from_result(raw)
+            if img is not None:
+                logger.info("catvton_success_default")
+                return img
+        except Exception as exc:
+            logger.warning("catvton_default_failed", error=str(exc)[:120])
+            continue
+
     return None
 
 
@@ -260,7 +366,10 @@ def _run_hf_spaces_sync(
             "gradio_client not installed. Run: pip install gradio-client>=1.0.0"
         ) from exc
 
+    # gradio_client reads HF_TOKEN from env — set it before creating any Client
     if hf_token:
+        os.environ["HF_TOKEN"] = hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
         try:
             from huggingface_hub import login as hf_login
             hf_login(token=hf_token, add_to_git_credential=False)
@@ -278,7 +387,16 @@ def _run_hf_spaces_sync(
         for space, predict_fn in _SPACES:
             logger.info("hf_spaces_trying", space=space, cloth_type=cloth_type)
             try:
-                client = Client(space)
+                # Try passing token via headers (gradio_client >= 1.0)
+                try:
+                    auth_headers = (
+                        {"Authorization": f"Bearer {hf_token}"}
+                        if hf_token else {}
+                    )
+                    client = Client(space, headers=auth_headers)
+                except TypeError:
+                    client = Client(space)
+
                 img = predict_fn(client, person_path, dress_path, cloth_type)
                 if img is not None:
                     logger.info("hf_spaces_done", space=space)
